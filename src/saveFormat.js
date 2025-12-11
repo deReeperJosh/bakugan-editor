@@ -4,6 +4,7 @@ import {
     ATTRIBUTES,
     CARDS,
     STYLING_FIELDS,
+    OPPONENT_NAMES,
 } from "./constants";
 
 // -----------------
@@ -12,13 +13,26 @@ import {
 
 const FORMAT_CONFIGS = {
     ps3: {
-        saveSize: null,              // single save per file
+        saveSize: null,
         baseOffset: 227,
         cardBaseOffset: -48,
         playerNameOffset: 0x00C5,
         stylingOffset: 0x31BF,
         deckOffsets: [0x2908, 0x2954],
-        wordEndian: "big",           // 16-bit values stored big-endian
+        wordEndian: "big",
+        statsOffsets: {
+            rankingPoints: 0x2AAD,
+            bakuganPoints: 0x2AB1,
+            battles: 0x2AB7,
+            wins: 0x2AB9,
+            losses: 0x2ABB,
+            sphereAttacks: 0x2ABF,
+            doubleStands: 0x2AC1,
+            oneVsOne: 0x2AC3,
+            battleRoyale: 0x2AC5,
+            tagTeam: 0x2AC7,
+            opponentWins: 0x2ACA, // 16 bytes for 16 opponents
+        },
     },
     wii: {
         saveSize: 13952,
@@ -28,15 +42,17 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x31EF,
         deckOffsets: [0x2938, 0x2984],
         wordEndian: "big",
+        statsOffsets: null,
     },
     ps2: {
-        saveSize: 13920,             // example: same as Wii; adjust if different
-        baseOffset: 2336,             // example: same pattern as Wii; adjust if needed
+        saveSize: 13920,
+        baseOffset: 2336,
         cardBaseOffset: 2064,
         playerNameOffset: 0x0904,
         stylingOffset: 0x39FE,
         deckOffsets: [0x3148, 0x3194],
         wordEndian: "little",
+        statsOffsets: null,
     },
     x360: {
         saveSize: 13952,
@@ -46,6 +62,7 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x321B,
         deckOffsets: [0x2964, 0x29B0],
         wordEndian: "big",
+        statsOffsets: null,
     },
 };
 
@@ -100,7 +117,7 @@ export function getSaveContext(platform, saveSlot = 0) {
     }
 
     let slot = saveSlot || 0;
-    if (platform === "ps3") slot = 0; // only one save
+    if (platform === "ps3") slot = 0;
     if (platform === "wii" || platform === "x360" || platform === "ps2") {
         if (slot < 0) slot = 0;
         if (slot > 3) slot = 3;
@@ -117,6 +134,11 @@ export function getSaveContext(platform, saveSlot = 0) {
         stylingOffset: cfg.stylingOffset + shift,
         deckOffsets: cfg.deckOffsets.map((o) => o + shift),
         wordEndian: cfg.wordEndian || "big",
+        statsOffsets: cfg.statsOffsets
+            ? Object.fromEntries(
+                Object.entries(cfg.statsOffsets).map(([k, v]) => [k, v + shift])
+            )
+            : null,
     };
 }
 
@@ -144,6 +166,36 @@ function writeU16(bytes, offset, value, ctx) {
     }
 }
 
+// 24-bit helpers for ranking/bakugan points (3 bytes)
+function readU24(bytes, offset, ctx) {
+    if (ctx.wordEndian === "little") {
+        // low-mid-high: b0 + (b1<<8) + (b2<<16)
+        return (
+            (bytes[offset] |
+                (bytes[offset + 1] << 8) |
+                (bytes[offset + 2] << 16)) >>> 0
+        );
+    }
+    // big-endian: high-mid-low
+    return (
+        (bytes[offset] << 16) |
+        (bytes[offset + 1] << 8) |
+        bytes[offset + 2]
+    ) >>> 0;
+}
+
+function writeU24(bytes, offset, value, ctx) {
+    const v = value & 0xffffff;
+    if (ctx.wordEndian === "little") {
+        bytes[offset] = v & 0xff;
+        bytes[offset + 1] = (v >> 8) & 0xff;
+        bytes[offset + 2] = (v >> 16) & 0xff;
+    } else {
+        bytes[offset] = (v >> 16) & 0xff;
+        bytes[offset + 1] = (v >> 8) & 0xff;
+        bytes[offset + 2] = v & 0xff;
+    }
+}
 
 export function parseSaveFile(buffer) {
     const bytes = new Uint8Array(buffer);
@@ -475,5 +527,76 @@ export function writeDeck(bytes, ctx, deckIndex, deck) {
 
     for (let i = 30; i < 36; i++) {
         bytes[base + i] = 0xff;
+    }
+}
+
+export function readStats(bytes, ctx) {
+    const o = ctx.statsOffsets;
+    if (!o) {
+        throw new Error("Stats are not available for this platform/slot yet.");
+    }
+
+    const rankingPoints = readU24(bytes, o.rankingPoints, ctx);
+    const bakuganPoints = readU24(bytes, o.bakuganPoints, ctx);
+
+    const battles = bytes[o.battles] ?? 0;
+    const wins = bytes[o.wins] ?? 0;
+    const losses = bytes[o.losses] ?? 0;
+    const sphereAttacks = bytes[o.sphereAttacks] ?? 0;
+    const doubleStands = bytes[o.doubleStands] ?? 0;
+    const oneVsOne = bytes[o.oneVsOne] ?? 0;
+    const battleRoyale = bytes[o.battleRoyale] ?? 0;
+    const tagTeam = bytes[o.tagTeam] ?? 0;
+
+    const opponentWins = [];
+    if (o.opponentWins != null) {
+        for (let i = 0; i < 16; i++) {
+            opponentWins.push(bytes[o.opponentWins + i] ?? 0);
+        }
+    }
+
+    return {
+        rankingPoints,
+        bakuganPoints,
+        battles,
+        wins,
+        losses,
+        sphereAttacks,
+        doubleStands,
+        oneVsOne,
+        battleRoyale,
+        tagTeam,
+        opponentWins,
+    };
+}
+
+export function writeStats(bytes, ctx, stats) {
+    const o = ctx.statsOffsets;
+    if (!o) {
+        throw new Error("Stats are not available for this platform/slot yet.");
+    }
+
+    const clampByte = (n) => {
+        if (Number.isNaN(n)) return 0;
+        return Math.max(0, Math.min(255, n | 0));
+    };
+
+    writeU24(bytes, o.rankingPoints, stats.rankingPoints ?? 0, ctx);
+    writeU24(bytes, o.bakuganPoints, stats.bakuganPoints ?? 0, ctx);
+
+    bytes[o.battles] = clampByte(stats.battles);
+    bytes[o.wins] = clampByte(stats.wins);
+    bytes[o.losses] = clampByte(stats.losses);
+    bytes[o.sphereAttacks] = clampByte(stats.sphereAttacks);
+    bytes[o.doubleStands] = clampByte(stats.doubleStands);
+    bytes[o.oneVsOne] = clampByte(stats.oneVsOne);
+    bytes[o.battleRoyale] = clampByte(stats.battleRoyale);
+    bytes[o.tagTeam] = clampByte(stats.tagTeam);
+
+    if (o.opponentWins != null && Array.isArray(stats.opponentWins)) {
+        for (let i = 0; i < 16; i++) {
+            const v = stats.opponentWins[i] ?? 0;
+            bytes[o.opponentWins + i] = clampByte(v);
+        }
     }
 }

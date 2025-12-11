@@ -502,7 +502,7 @@ export const STYLING_FIELDS = [
 
     { key: "shoesStyle", label: "Shoes style", byteOffset: 36, group: "Shoes", prop: "Style" },
     { key: "shoeColour", label: "Shoe colour", byteOffset: 38, group: "Shoes", prop: "Colour" },
-    
+
     { key: "glovesStyle", label: "Gloves", byteOffset: 40, group: "Gloves", prop: "Style" },
 
     { key: "watchColour", label: "Watch colour", byteOffset: 44, group: "Watch", prop: "Color" },
@@ -516,3 +516,22 @@ export function getStylingOptions(fieldKey) {
     const options = groupObj[field.prop];
     return options || [];
 }
+
+export const OPPONENT_NAMES = [
+    "Dan",
+    "Runo",
+    "Marucho",
+    "Shun",
+    "Julie",
+    "Masquerade",
+    "Billy",
+    "Klaus",
+    "Chan Lee",
+    "Julio",
+    "Komba",
+    "Shuji",
+    "Akira",
+    "Jewls",
+    "Jenny",
+    "Marduk",
+];

@@ -23,8 +23,10 @@ import {
     writeDeck,
     PLATFORMS,
     getSaveContext,
+    readStats,
+    writeStats,
 } from "./saveFormat";
-import { STYLING_FIELDS, getStylingOptions } from "./constants";
+import { STYLING_FIELDS, getStylingOptions, OPPONENT_NAMES } from "./constants";
 
 function clamp(value, min, max) {
     if (Number.isNaN(value)) return min;
@@ -89,6 +91,9 @@ export default function BakuganSaveEditor() {
 
     // Decks
     const [decks, setDecks] = useState(null);
+
+    // Stats (battles, wins, ranking, etc.)
+    const [stats, setStats] = useState(null);
 
     // ---------- File handling ----------
 
@@ -516,6 +521,51 @@ export default function BakuganSaveEditor() {
         }
     };
 
+    useEffect(() => {
+        if (!parsed?.bytes || !ctx) {
+            setStats(null);
+            return;
+        }
+        try {
+            const s = readStats(parsed.bytes, ctx);
+            setStats(s);
+        } catch (e) {
+            // Stats not available on this platform/slot is not fatal; just show message.
+            console.error(e);
+            setStats(null);
+        }
+    }, [parsed, ctx]);
+
+    const handleStatsFieldChange = (key) => (e) => {
+        const value = Number(e.target.value);
+        setStats((prev) => ({
+            ...prev,
+            [key]: Number.isNaN(value) ? 0 : value,
+        }));
+    };
+
+    const handleOpponentWinChange = (index) => (e) => {
+        const value = Number(e.target.value);
+        setStats((prev) => {
+            if (!prev) return prev;
+            const copy = prev.opponentWins ? [...prev.opponentWins] : Array(16).fill(0);
+            copy[index] = Number.isNaN(value) ? 0 : value;
+            return { ...prev, opponentWins: copy };
+        });
+    };
+
+    const handleSaveStatsSection = () => {
+        if (!parsed?.bytes || !ctx || !stats) return;
+        try {
+            writeStats(parsed.bytes, ctx, stats);
+            const updated = readStats(parsed.bytes, ctx);
+            setStats(updated);
+        } catch (e) {
+            console.error(e);
+            setError(e.message || "Failed to save stats.");
+        }
+    };
+
     // ---------- Render ----------
 
     return (
@@ -619,6 +669,7 @@ export default function BakuganSaveEditor() {
                     {[
                         { key: "bakugan", label: "Bakugan Stats" },
                         { key: "cards", label: "Cards" },
+                        { key: "stats", label: "Battle Stats" },   // 👈 new
                         { key: "appearance", label: "Appearance" },
                         { key: "decks", label: "Decks" },
                     ].map((tab) => (
@@ -1287,6 +1338,244 @@ export default function BakuganSaveEditor() {
                         ) : (
                             <p className="text-sm text-gray-800">
                                 Deck data not available for this save.
+                            </p>
+                        )}
+                    </section>
+                )}
+
+                {parsed && ctx && activeTab === "stats" && (
+                    <section className="space-y-6">
+                        <h2 className="text-lg font-semibold text-gray-900">Battle Stats</h2>
+                        <p className="text-xs text-gray-800">
+                            These values track your overall performance and wins against each opponent
+                            for the current platform and save slot.
+                        </p>
+
+                        {stats ? (
+                            <>
+                                {/* Overall counters */}
+                                <div className="grid gap-6 md:grid-cols-2">
+                                    <div className="space-y-3">
+                                        <h3 className="text-sm font-semibold text-gray-900">
+                                            Overall Points
+                                        </h3>
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-medium text-gray-900">
+                                                Ranking Points
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                max={16777215}
+                                                value={stats.rankingPoints ?? 0}
+                                                onChange={handleStatsFieldChange("rankingPoints")}
+                                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                                            />
+                                            <p className="text-xs text-gray-800">
+                                                3-byte value (0 – 16,777,215).
+                                            </p>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-medium text-gray-900">
+                                                Bakugan Points
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                max={16777215}
+                                                value={stats.bakuganPoints ?? 0}
+                                                onChange={handleStatsFieldChange("bakuganPoints")}
+                                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                                            />
+                                            <p className="text-xs text-gray-800">
+                                                3-byte value (0 – 16,777,215).
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <h3 className="text-sm font-semibold text-gray-900">
+                                            Battle Counts
+                                        </h3>
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-gray-900">
+                                                    Battles
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={255}
+                                                    value={stats.battles ?? 0}
+                                                    onChange={handleStatsFieldChange("battles")}
+                                                    className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-gray-900">
+                                                    Wins
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={255}
+                                                    value={stats.wins ?? 0}
+                                                    onChange={handleStatsFieldChange("wins")}
+                                                    className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-gray-900">
+                                                    Losses
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={255}
+                                                    value={stats.losses ?? 0}
+                                                    onChange={handleStatsFieldChange("losses")}
+                                                    className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-gray-900">
+                                                    Sphere Attacks
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={255}
+                                                    value={stats.sphereAttacks ?? 0}
+                                                    onChange={handleStatsFieldChange("sphereAttacks")}
+                                                    className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-medium text-gray-900">
+                                                    Double Stands
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={255}
+                                                    value={stats.doubleStands ?? 0}
+                                                    onChange={handleStatsFieldChange("doubleStands")}
+                                                    className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-medium text-gray-900">
+                                                Game Types
+                                            </label>
+                                            <div className="grid grid-cols-3 gap-3">
+                                                <div className="space-y-1">
+                                                    <span className="block text-xs text-gray-900">
+                                                        1 vs 1
+                                                    </span>
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        max={255}
+                                                        value={stats.oneVsOne ?? 0}
+                                                        onChange={handleStatsFieldChange("oneVsOne")}
+                                                        className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="block text-xs text-gray-900">
+                                                        Battle Royale
+                                                    </span>
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        max={255}
+                                                        value={stats.battleRoyale ?? 0}
+                                                        onChange={handleStatsFieldChange("battleRoyale")}
+                                                        className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="block text-xs text-gray-900">
+                                                        Tag Team
+                                                    </span>
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        max={255}
+                                                        value={stats.tagTeam ?? 0}
+                                                        onChange={handleStatsFieldChange("tagTeam")}
+                                                        className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Per-opponent wins */}
+                                <div className="space-y-3">
+                                    <h3 className="text-sm font-semibold text-gray-900">
+                                        Wins vs Opponents
+                                    </h3>
+                                    <p className="text-xs text-gray-800">
+                                        Each value tracks the number of wins you have against a specific
+                                        character.
+                                    </p>
+                                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-gray-100">
+                                                <tr>
+                                                    <th className="text-left px-3 py-2 border-b border-gray-200 text-xs text-gray-900">
+                                                        Opponent
+                                                    </th>
+                                                    <th className="text-left px-3 py-2 border-b border-gray-200 text-xs text-gray-900">
+                                                        Wins
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {OPPONENT_NAMES.map((name, idx) => (
+                                                    <tr
+                                                        key={name}
+                                                        className="odd:bg-white even:bg-gray-50"
+                                                    >
+                                                        <td className="px-3 py-2 border-b border-gray-100 text-xs text-gray-900">
+                                                            {name}
+                                                        </td>
+                                                        <td className="px-3 py-2 border-b border-gray-100">
+                                                            <input
+                                                                type="number"
+                                                                min={0}
+                                                                max={255}
+                                                                value={stats.opponentWins?.[idx] ?? 0}
+                                                                onChange={handleOpponentWinChange(idx)}
+                                                                className="w-20 border border-gray-300 rounded px-2 py-1 text-xs text-gray-900"
+                                                            />
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={handleSaveStatsSection}
+                                        className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-xl hover:bg-green-700 transition"
+                                    >
+                                        Save Stats to Memory
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <p className="text-sm text-gray-800">
+                                Stats are not available for this platform or save slot yet.
                             </p>
                         )}
                     </section>
