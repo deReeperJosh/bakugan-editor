@@ -13,23 +13,43 @@ import {
 const FORMAT_CONFIGS = {
     ps3: {
         saveSize: null,              // single save per file
-        baseOffset: 227,             // Bakugan base
-        cardBaseOffset: -48,      // TODO: update when known
+        baseOffset: 227,
+        cardBaseOffset: -48,
         playerNameOffset: 0x00C5,
         stylingOffset: 0x31BF,
         deckOffsets: [0x2908, 0x2954],
+        wordEndian: "big",           // 16-bit values stored big-endian
     },
     wii: {
-        saveSize: 13952,             // bytes per save
-        baseOffset: 275,             // 227 + 48
-        cardBaseOffset: 0x0000,      // card flags start at 0 per save
-        playerNameOffset: 0x00F5,    // 0xC5 + 0x30
-        stylingOffset: 0x31EF,       // 0x31BF + 0x30
-        deckOffsets: [0x2938, 0x2984], // +0x30 from PS3
+        saveSize: 13952,
+        baseOffset: 275,
+        cardBaseOffset: 0,
+        playerNameOffset: 0x00F5,
+        stylingOffset: 0x31EF,
+        deckOffsets: [0x2938, 0x2984],
+        wordEndian: "big",
+    },
+    ps2: {
+        saveSize: 13920,             // example: same as Wii; adjust if different
+        baseOffset: 2336,             // example: same pattern as Wii; adjust if needed
+        cardBaseOffset: 2064,
+        playerNameOffset: 0x0904,
+        stylingOffset: 0x39FE,
+        deckOffsets: [0x3148, 0x3194],
+        wordEndian: "little",
+    },
+    x360: {
+        saveSize: 13952,
+        baseOffset: 319,
+        cardBaseOffset: 44,
+        playerNameOffset: 0x00121,
+        stylingOffset: 0x321B,
+        deckOffsets: [0x2964, 0x29B0],
+        wordEndian: "big",
     },
 };
 
-export const PLATFORMS = ["ps3", "wii"];
+export const PLATFORMS = ["ps3", "wii", "x360", "ps2"];
 
 // -----------------
 // Core config
@@ -81,7 +101,7 @@ export function getSaveContext(platform, saveSlot = 0) {
 
     let slot = saveSlot || 0;
     if (platform === "ps3") slot = 0; // only one save
-    if (platform === "wii") {
+    if (platform === "wii" || platform === "x360" || platform === "ps2") {
         if (slot < 0) slot = 0;
         if (slot > 3) slot = 3;
     }
@@ -96,12 +116,34 @@ export function getSaveContext(platform, saveSlot = 0) {
         playerNameOffset: cfg.playerNameOffset + shift,
         stylingOffset: cfg.stylingOffset + shift,
         deckOffsets: cfg.deckOffsets.map((o) => o + shift),
+        wordEndian: cfg.wordEndian || "big",
     };
 }
 
 // -----------------
 // Core helpers
 // -----------------
+
+function readU16(bytes, offset, ctx) {
+    if (ctx.wordEndian === "little") {
+        // little-endian: low byte first
+        return (bytes[offset] | (bytes[offset + 1] << 8)) >>> 0;
+    }
+    // big-endian (default)
+    return ((bytes[offset] << 8) | bytes[offset + 1]) >>> 0;
+}
+
+function writeU16(bytes, offset, value, ctx) {
+    const v = value & 0xffff;
+    if (ctx.wordEndian === "little") {
+        bytes[offset] = v & 0xff;
+        bytes[offset + 1] = (v >> 8) & 0xff;
+    } else {
+        bytes[offset] = (v >> 8) & 0xff;
+        bytes[offset + 1] = v & 0xff;
+    }
+}
+
 
 export function parseSaveFile(buffer) {
     const bytes = new Uint8Array(buffer);
@@ -140,7 +182,7 @@ export function readBakuganEntry(bytes, ctx, bakuganId, attributeId) {
     const attribute = bytes[offset + 4];
 
     // Power: 2 bytes, big-endian
-    const power = (bytes[offset + 5] << 8) | bytes[offset + 6];
+    const power = readU16(bytes, offset + 5, ctx);
 
     const speed = bytes[offset + 8];
     const defense = bytes[offset + 9];
@@ -178,13 +220,11 @@ export function writeBakuganEntry(bytes, ctx, bakuganId, attributeId, raw) {
         );
     }
 
-    bytes[offset + 0] = raw.id ?? 0;
-    bytes[offset + 4] = raw.attribute ?? 0;
+    bytes[offset + 0] = bakuganId ?? 0;
+    bytes[offset + 4] = attributeId ?? 0;
 
     const power = raw.power ?? 0;
-    // Big-endian
-    bytes[offset + 5] = (power >> 8) & 0xff;
-    bytes[offset + 6] = power & 0xff;
+    writeU16(bytes, offset + 5, power, ctx);
 
     bytes[offset + 8] = raw.speed ?? 0;
     bytes[offset + 9] = raw.defense ?? 0;
@@ -327,7 +367,7 @@ export function readDeck(bytes, ctx, deckIndex) {
     // Bakugan slots
     for (let i = 0; i < 3; i++) {
         const offset = base + i * 2;
-        const v = (bytes[offset] << 8) | bytes[offset + 1];
+        const v = readU16(bytes, offset, ctx);
 
         if (v === 0xffff) {
             deck.bakuganSlots.push({ bakuganId: null, attributeId: null });
@@ -338,10 +378,10 @@ export function readDeck(bytes, ctx, deckIndex) {
         }
     }
 
-    // Gate cards (offset base+12, 3 x 2 bytes)
+    // Gate cards
     for (let i = 0; i < 3; i++) {
         const offset = base + 12 + i * 2;
-        const v = (bytes[offset] << 8) | bytes[offset + 1];
+        const v = readU16(bytes, offset, ctx);
 
         if (v === 0xffff) {
             deck.gateCards.push({ cardId: null });
@@ -351,10 +391,10 @@ export function readDeck(bytes, ctx, deckIndex) {
         }
     }
 
-    // Ability cards (offset base+24, 3 x 2 bytes)
+    // Ability cards
     for (let i = 0; i < 3; i++) {
         const offset = base + 24 + i * 2;
-        const v = (bytes[offset] << 8) | bytes[offset + 1];
+        const v = readU16(bytes, offset, ctx);
 
         if (v === 0xffff) {
             deck.abilityCards.push({ cardId: null });
@@ -380,12 +420,9 @@ export function writeDeck(bytes, ctx, deckIndex, deck) {
 
     const writeSlot = (offset, valueOrNull) => {
         if (valueOrNull == null) {
-            bytes[offset] = 0xff;
-            bytes[offset + 1] = 0xff;
+            writeU16(bytes, offset, 0xffff, ctx);
         } else {
-            const v = valueOrNull & 0xffff;
-            bytes[offset] = (v >> 8) & 0xff;
-            bytes[offset + 1] = v & 0xff;
+            writeU16(bytes, offset, valueOrNull, ctx);
         }
     };
 
