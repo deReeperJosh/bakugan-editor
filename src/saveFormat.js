@@ -33,6 +33,7 @@ const FORMAT_CONFIGS = {
             battleRoyale: 0x2AC5,
             tagTeam: 0x2AC7,
             opponentWins: 0x2ACA,
+            attributeUsageBase: 0x2B75,
         },
     },
     wii: {
@@ -572,6 +573,14 @@ export function readStats(bytes, ctx) {
         }
     }
 
+    const attributeUsage = [];
+    if (o.attributeUsageBase != null) {
+        for (let i = 0; i < 6; i++) {
+            const offset = o.attributeUsageBase + i * 2; // 1 byte, 1 padding
+            attributeUsage.push(bytes[offset] ?? 0);
+        }
+    }
+
     return {
         rankingPoints,
         bakuganPoints,
@@ -584,6 +593,7 @@ export function readStats(bytes, ctx) {
         battleRoyale,
         tagTeam,
         opponentWins,
+        attributeUsage,
     };
 }
 
@@ -614,6 +624,15 @@ export function writeStats(bytes, ctx, stats) {
         for (let i = 0; i < 16; i++) {
             const v = stats.opponentWins[i] ?? 0;
             bytes[o.opponentWins + i] = clampByte(v);
+        }
+    }
+
+    if (o.attributeUsageBase != null && Array.isArray(stats.attributeUsage)) {
+        for (let i = 0; i < 6; i++) {
+            const v = stats.attributeUsage[i] ?? 0;
+            const offset = o.attributeUsageBase + i * 2;
+            bytes[offset] = clampByte(v);
+            bytes[offset + 1] = 0x00;
         }
     }
 }

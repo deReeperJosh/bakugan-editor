@@ -650,6 +650,18 @@ export default function BakuganSaveEditor() {
         });
     };
 
+    const handleAttributeUsageChange = (attrId) => (e) => {
+        const value = Number(e.target.value);
+        setStats((prev) => {
+            if (!prev) return prev;
+            const usage = prev.attributeUsage
+                ? [...prev.attributeUsage]
+                : Array(6).fill(0);
+            usage[attrId] = Number.isNaN(value) ? 0 : value;
+            return { ...prev, attributeUsage: usage };
+        });
+    };
+
     const handleSaveStatsSection = () => {
         if (!parsed?.bytes || !ctx || !stats) return;
         try {
@@ -775,8 +787,8 @@ export default function BakuganSaveEditor() {
                             type="button"
                             onClick={() => setActiveTab(tab.key)}
                             className={`px-4 py-2 rounded-full text-sm font-medium transition ${activeTab === tab.key
-                                    ? "bg-blue-600 text-white shadow"
-                                    : "bg-gray-200 text-gray-400 hover:bg-gray-300 hover:text-gray-500"
+                                ? "bg-blue-600 text-white shadow"
+                                : "bg-gray-200 text-gray-400 hover:bg-gray-300 hover:text-gray-500"
                                 }`}
                         >
                             {tab.label}
@@ -1527,7 +1539,7 @@ export default function BakuganSaveEditor() {
                                         setDebugRange(ctx.statsOffsets.rankingPoints, 64);
                                         setActiveTab("debug");
                                     }}
-                                    className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-gray-800 hover:bg-gray-300"
+                                    className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
                                 >
                                     View stats block in Debug
                                 </button>
@@ -1743,6 +1755,33 @@ export default function BakuganSaveEditor() {
                                                 ))}
                                             </tbody>
                                         </table>
+                                    </div>
+                                </div>
+
+                                {/* Attribute usage */}
+                                <div className="space-y-2">
+                                    <h3 className="text-sm font-semibold text-gray-900">
+                                        Attribute Usage
+                                    </h3>
+                                    <p className="text-xs text-gray-800">
+                                        Number of times each attribute has been used. One byte per attribute.
+                                    </p>
+                                    <div className="grid grid-cols-3 gap-3 max-w-md">
+                                        {attributeList.map((attr) => (
+                                            <div key={attr.id} className="space-y-1">
+                                                <label className="block text-xs font-medium text-gray-900">
+                                                    {attr.name}
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={255}
+                                                    value={stats.attributeUsage?.[attr.id] ?? 0}
+                                                    onChange={handleAttributeUsageChange(attr.id)}
+                                                    className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                />
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
 
