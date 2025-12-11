@@ -25,6 +25,8 @@ import {
     getSaveContext,
     readStats,
     writeStats,
+    readDeckName,
+    writeDeckName,
 } from "./saveFormat";
 import { STYLING_FIELDS, getStylingOptions, OPPONENT_NAMES } from "./constants";
 
@@ -91,9 +93,15 @@ export default function BakuganSaveEditor() {
 
     // Decks
     const [decks, setDecks] = useState(null);
+    const [deckNames, setDeckNames] = useState(null);
 
     // Stats (battles, wins, ranking, etc.)
     const [stats, setStats] = useState(null);
+
+    // Debug / hex viewer
+    const [debugOffsetInput, setDebugOffsetInput] = useState("0");
+    const [debugLengthInput, setDebugLengthInput] = useState("256");
+    const [debugHighlight, setDebugHighlight] = useState(null);
 
     // ---------- File handling ----------
 
@@ -175,6 +183,64 @@ export default function BakuganSaveEditor() {
             return null;
         }
     }, [parsed, platform, saveSlot]);
+
+    // ---------- Debug info ----------
+
+    // Parsed numeric values for debug
+    const debugOffset = useMemo(() => {
+        const raw = debugOffsetInput.trim() || "0";
+        // Allow 0x... hex or decimal
+        const n = raw.toLowerCase().startsWith("0x")
+            ? parseInt(raw, 16)
+            : parseInt(raw, 10);
+        if (Number.isNaN(n) || n < 0) return 0;
+        return n;
+    }, [debugOffsetInput]);
+
+    const debugLength = useMemo(() => {
+        const raw = debugLengthInput.trim() || "256";
+        const n = parseInt(raw, 10);
+        if (Number.isNaN(n) || n <= 0) return 256;
+        return Math.min(n, parsed?.bytes?.length ?? n);
+    }, [debugLengthInput, parsed]);
+
+    // Helper to set range + optional highlight
+    const setDebugRange = (start, length, withHighlight = true) => {
+        if (!parsed?.bytes) return;
+        const maxLen = parsed.bytes.length;
+        const s = Math.max(0, Math.min(start, maxLen - 1));
+        const l = Math.max(1, Math.min(length, maxLen - s));
+        setDebugOffsetInput(String(s));
+        setDebugLengthInput(String(l));
+        if (withHighlight) {
+            setDebugHighlight({ start: s, end: s + l });
+        }
+    };
+
+    const handleDebugPresetPlayerName = () => {
+        if (!ctx) return;
+        setDebugRange(ctx.playerNameOffset, 32);
+    };
+
+    const handleDebugPresetStyling = () => {
+        if (!ctx) return;
+        setDebugRange(ctx.stylingOffset, 64);
+    };
+
+    const handleDebugPresetDeck = (deckIndex) => () => {
+        if (!ctx) return;
+        const deckOffset = ctx.deckOffsets?.[deckIndex];
+        if (deckOffset == null) return;
+
+        const nameOffset = ctx.deckNameOffsets?.[deckIndex];
+        const start = nameOffset != null ? nameOffset : deckOffset;
+        setDebugRange(start, 80);
+    };
+
+    const handleDebugPresetStats = () => {
+        if (!ctx?.statsOffsets) return;
+        setDebugRange(ctx.statsOffsets.rankingPoints, 64);
+    };
 
     // ---------- Bakugan stats ----------
 
@@ -374,6 +440,7 @@ export default function BakuganSaveEditor() {
             setPlayerName("");
             setStyling(null);
             setDecks(null);
+            setDeckNames(null);
             return;
         }
 
@@ -402,10 +469,20 @@ export default function BakuganSaveEditor() {
             const deck1 = readDeck(parsed.bytes, ctx, 0);
             const deck2 = readDeck(parsed.bytes, ctx, 1);
             setDecks([deck1, deck2]);
+
+            try {
+                const name1 = readDeckName(parsed.bytes, ctx, 0);
+                const name2 = readDeckName(parsed.bytes, ctx, 1);
+                setDeckNames([name1, name2]);
+            } catch (nameErr) {
+                console.error(nameErr);
+                setDeckNames(null); // deck names not configured on this platform
+            }
         } catch (e) {
             console.error(e);
             setError(e.message || "Failed to read decks.");
             setDecks(null);
+            setDeckNames(null);
         }
     }, [parsed, ctx]);
 
@@ -511,14 +588,33 @@ export default function BakuganSaveEditor() {
         try {
             decks.forEach((deck, idx) => {
                 writeDeck(parsed.bytes, ctx, idx, deck);
+                if (deckNames && deckNames[idx] != null) {
+                    writeDeckName(parsed.bytes, ctx, idx, deckNames[idx]);
+                }
             });
             const deck1 = readDeck(parsed.bytes, ctx, 0);
             const deck2 = readDeck(parsed.bytes, ctx, 1);
             setDecks([deck1, deck2]);
+
+            if (deckNames) {
+                const name1 = readDeckName(parsed.bytes, ctx, 0);
+                const name2 = readDeckName(parsed.bytes, ctx, 1);
+                setDeckNames([name1, name2]);
+            }
         } catch (e) {
             console.error(e);
             setError(e.message || "Failed to save decks.");
         }
+    };
+
+    const handleDeckNameChange = (deckIndex) => (e) => {
+        const value = e.target.value.slice(0, 10); // max 10 chars
+        setDeckNames((prev) => {
+            const base = prev || ["", ""];
+            const copy = [...base];
+            copy[deckIndex] = value;
+            return copy;
+        });
     };
 
     useEffect(() => {
@@ -665,21 +761,22 @@ export default function BakuganSaveEditor() {
                 )}
 
                 {/* Tabs */}
-                <div className="border-b border-gray-300 flex justify-center gap-6 pb-2">
+                <div className="flex justify-center gap-3 py-2">
                     {[
                         { key: "bakugan", label: "Bakugan Stats" },
                         { key: "cards", label: "Cards" },
-                        { key: "stats", label: "Battle Stats" },   // 👈 new
+                        { key: "stats", label: "Battle Stats" },
                         { key: "appearance", label: "Appearance" },
                         { key: "decks", label: "Decks" },
+                        { key: "debug", label: "Debug" },
                     ].map((tab) => (
                         <button
                             key={tab.key}
                             type="button"
                             onClick={() => setActiveTab(tab.key)}
-                            className={`pb-2 text-sm font-medium transition-all ${activeTab === tab.key
-                                ? "text-blue-700 border-b-2 border-blue-600"
-                                : "text-white hover:text-gray-400 hover:border-b-2 hover:border-gray-200"
+                            className={`px-4 py-2 rounded-full text-sm font-medium transition ${activeTab === tab.key
+                                    ? "bg-blue-600 text-white shadow"
+                                    : "bg-gray-200 text-gray-400 hover:bg-gray-300 hover:text-gray-500"
                                 }`}
                         >
                             {tab.label}
@@ -727,6 +824,20 @@ export default function BakuganSaveEditor() {
                                     </select>
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="flex justify-center">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!entry || !ctx) return;
+                                    setDebugRange(entry.offset, 14); // 14-byte Bakugan entry
+                                    setActiveTab("debug");
+                                }}
+                                className="mt-2 px-3 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                            >
+                                View this Bakugan entry in Debug
+                            </button>
                         </div>
 
                         {entry && editableStats ? (
@@ -1087,6 +1198,21 @@ export default function BakuganSaveEditor() {
                             </div>
                         </div>
 
+                        <div className="flex justify-center">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!ctx) return;
+                                    setDebugRange(ctx.playerNameOffset, 32);
+                                    setActiveTab("debug");
+                                }}
+                                className="mt-1 px-3 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                            >
+                                View name bytes in Debug
+                            </button>
+                        </div>
+
+
                         {/* Character styling */}
                         <div className="space-y-3">
                             <h3 className="text-md font-semibold text-gray-900">
@@ -1096,6 +1222,20 @@ export default function BakuganSaveEditor() {
                                 These options control your avatar&apos;s appearance in this save
                                 slot.
                             </p>
+
+                            <div className="flex justify-end">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (!ctx) return;
+                                        setDebugRange(ctx.stylingOffset, 64);
+                                        setActiveTab("debug");
+                                    }}
+                                    className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                                >
+                                    View styling bytes in Debug
+                                </button>
+                            </div>
 
                             {styling ? (
                                 <>
@@ -1177,9 +1317,37 @@ export default function BakuganSaveEditor() {
                                             className="border border-gray-200 rounded-xl bg-white overflow-hidden"
                                         >
                                             <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-                                                <h3 className="text-sm font-semibold text-gray-900">
-                                                    Deck {deckIndex + 1}
-                                                </h3>
+                                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                                    <h3 className="text-sm font-semibold text-gray-900">
+                                                        Deck {deckIndex + 1}
+                                                    </h3>
+                                                    {deckNames && (
+                                                        <div className="flex items-center gap-2">
+                                                            <label className="text-xs font-medium text-gray-900">
+                                                                Name
+                                                            </label>
+                                                            <input
+                                                                type="text"
+                                                                maxLength={10}
+                                                                value={deckNames[deckIndex] ?? ""}
+                                                                onChange={handleDeckNameChange(deckIndex)}
+                                                                className="border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-900"
+                                                                placeholder="(unnamed)"
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (!ctx) return;
+                                                            handleDebugPresetDeck(deckIndex)();
+                                                            setActiveTab("debug");
+                                                        }}
+                                                        className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-gray-800 hover:bg-gray-300"
+                                                    >
+                                                        View deck bytes in Debug
+                                                    </button>
+                                                </div>
                                             </div>
 
                                             <div className="p-4 space-y-4">
@@ -1350,6 +1518,21 @@ export default function BakuganSaveEditor() {
                             These values track your overall performance and wins against each opponent
                             for the current platform and save slot.
                         </p>
+
+                        <div className="flex justify-end">
+                            {ctx.statsOffsets && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setDebugRange(ctx.statsOffsets.rankingPoints, 64);
+                                        setActiveTab("debug");
+                                    }}
+                                    className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-gray-800 hover:bg-gray-300"
+                                >
+                                    View stats block in Debug
+                                </button>
+                            )}
+                        </div>
 
                         {stats ? (
                             <>
@@ -1578,6 +1761,175 @@ export default function BakuganSaveEditor() {
                                 Stats are not available for this platform or save slot yet.
                             </p>
                         )}
+                    </section>
+                )}
+
+                {parsed && ctx && activeTab === "debug" && (
+                    <section className="space-y-4">
+                        <h2 className="text-lg font-semibold text-gray-900">Debug / Hex Viewer</h2>
+                        <p className="text-xs text-gray-800">
+                            Expert view. Shows raw bytes from the currently loaded file and save slot.
+                            All changes made in other tabs are reflected here before you download.
+                        </p>
+
+                        {/* Controls */}
+                        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                            <div className="flex flex-wrap gap-3 items-end">
+                                <div className="flex flex-col">
+                                    <label className="text-xs font-medium text-gray-900">
+                                        Start offset (dec or 0x...)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={debugOffsetInput}
+                                        onChange={(e) => setDebugOffsetInput(e.target.value)}
+                                        className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 w-40"
+                                    />
+                                </div>
+                                <div className="flex flex-col">
+                                    <label className="text-xs font-medium text-gray-900">
+                                        Length (bytes)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={debugLengthInput}
+                                        onChange={(e) => setDebugLengthInput(e.target.value)}
+                                        className="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 w-24"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Presets */}
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleDebugPresetPlayerName}
+                                    className="px-2 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                                >
+                                    Player Name
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDebugPresetStyling}
+                                    className="px-2 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                                >
+                                    Styling
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDebugPresetDeck(0)}
+                                    className="px-2 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                                >
+                                    Deck 1
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDebugPresetDeck(1)}
+                                    className="px-2 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                                >
+                                    Deck 2
+                                </button>
+                                {ctx.statsOffsets && (
+                                    <button
+                                        type="button"
+                                        onClick={handleDebugPresetStats}
+                                        className="px-2 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
+                                    >
+                                        Stats Block
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Hex view */}
+                        <div className="border border-gray-200 rounded-xl overflow-auto max-h-80 bg-black">
+                            <div className="font-mono text-xs text-gray-100 p-3 space-y-0.5">
+                                {(() => {
+                                    const bytes = parsed.bytes;
+                                    if (!bytes || bytes.length === 0) {
+                                        return <div>No data loaded.</div>;
+                                    }
+
+                                    const start = Math.min(debugOffset, bytes.length - 1);
+                                    const end = Math.min(start + debugLength, bytes.length);
+                                    const rows = [];
+
+                                    const inHighlight = (i) =>
+                                        debugHighlight &&
+                                        i >= debugHighlight.start &&
+                                        i < debugHighlight.end;
+
+                                    for (let offset = start; offset < end; offset += 16) {
+                                        const rowEnd = Math.min(offset + 16, end);
+                                        const offsetLabel = offset
+                                            .toString(16)
+                                            .toUpperCase()
+                                            .padStart(8, "0");
+
+                                        const byteSpans = [];
+                                        const charSpans = [];
+
+                                        for (let i = offset; i < rowEnd; i++) {
+                                            const b = bytes[i];
+                                            const hex = b.toString(16).toUpperCase().padStart(2, "0");
+                                            const ch =
+                                                b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".";
+
+                                            const highlighted = inHighlight(i);
+
+                                            byteSpans.push(
+                                                <span
+                                                    key={`b-${i}`}
+                                                    className={highlighted ? "text-yellow-300 font-semibold" : ""}
+                                                >
+                                                    {hex}
+                                                </span>
+                                            );
+
+                                            charSpans.push(
+                                                <span
+                                                    key={`c-${i}`}
+                                                    className={highlighted ? "text-yellow-300 font-semibold" : ""}
+                                                >
+                                                    {ch}
+                                                </span>
+                                            );
+                                        }
+
+                                        // pad to 16 for alignment
+                                        while (byteSpans.length < 16) {
+                                            byteSpans.push(
+                                                <span key={`padb-${offset}-${byteSpans.length}`}>{"  "}</span>
+                                            );
+                                            charSpans.push(
+                                                <span key={`padc-${offset}-${charSpans.length}`}>{" "}</span>
+                                            );
+                                        }
+
+                                        rows.push(
+                                            <div key={offset} className="whitespace-pre">
+                                                <span className="text-gray-500">
+                                                    {offsetLabel}:
+                                                </span>
+                                                {"  "}
+                                                {byteSpans.map((span, idx) => (
+                                                    <React.Fragment key={span.key ?? idx}>
+                                                        {span}
+                                                        {idx < 15 && " "}
+                                                    </React.Fragment>
+                                                ))}
+                                                {"  |"}
+                                                {charSpans}
+                                                {"|"}
+                                            </div>
+                                        );
+                                    }
+
+                                    return rows;
+                                })()}
+                            </div>
+                        </div>
                     </section>
                 )}
             </div>

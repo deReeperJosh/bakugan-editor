@@ -20,6 +20,7 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x31BF,
         deckOffsets: [0x2908, 0x2954],
         wordEndian: "big",
+        deckNameBackOffset: 39,
         statsOffsets: {
             rankingPoints: 0x2AAD,
             bakuganPoints: 0x2AB1,
@@ -31,7 +32,7 @@ const FORMAT_CONFIGS = {
             oneVsOne: 0x2AC3,
             battleRoyale: 0x2AC5,
             tagTeam: 0x2AC7,
-            opponentWins: 0x2ACA, // 16 bytes for 16 opponents
+            opponentWins: 0x2ACA,
         },
     },
     wii: {
@@ -42,6 +43,7 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x31EF,
         deckOffsets: [0x2938, 0x2984],
         wordEndian: "big",
+        deckNameBackOffset: 39,      // assumption
         statsOffsets: null,
     },
     ps2: {
@@ -52,16 +54,18 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x39FE,
         deckOffsets: [0x3148, 0x3194],
         wordEndian: "little",
+        deckNameBackOffset: 40,
         statsOffsets: null,
     },
     x360: {
         saveSize: 13952,
         baseOffset: 319,
         cardBaseOffset: 44,
-        playerNameOffset: 0x00121,
+        playerNameOffset: 0x0121,
         stylingOffset: 0x321B,
         deckOffsets: [0x2964, 0x29B0],
         wordEndian: "big",
+        deckNameBackOffset: 39,      // assumption
         statsOffsets: null,
     },
 };
@@ -118,27 +122,40 @@ export function getSaveContext(platform, saveSlot = 0) {
 
     let slot = saveSlot || 0;
     if (platform === "ps3") slot = 0;
-    if (platform === "wii" || platform === "x360" || platform === "ps2") {
+    if (platform === "wii" || platform === "ps2" || platform === "x360") {
         if (slot < 0) slot = 0;
         if (slot > 3) slot = 3;
     }
 
     const shift = cfg.saveSize ? cfg.saveSize * slot : 0;
 
+    const baseOffset = cfg.baseOffset + shift;
+    const cardBaseOffset = cfg.cardBaseOffset + shift;
+    const playerNameOffset = cfg.playerNameOffset + shift;
+    const stylingOffset = cfg.stylingOffset + shift;
+    const deckOffsets = cfg.deckOffsets.map((o) => o + shift);
+    const statsOffsets = cfg.statsOffsets
+        ? Object.fromEntries(
+            Object.entries(cfg.statsOffsets).map(([k, v]) => [k, v + shift])
+        )
+        : null;
+
+    const deckNameOffsets =
+        cfg.deckNameBackOffset != null
+            ? deckOffsets.map((o) => o - cfg.deckNameBackOffset)
+            : null;
+
     return {
         platform,
         slot,
-        baseOffset: cfg.baseOffset + shift,
-        cardBaseOffset: cfg.cardBaseOffset + shift,
-        playerNameOffset: cfg.playerNameOffset + shift,
-        stylingOffset: cfg.stylingOffset + shift,
-        deckOffsets: cfg.deckOffsets.map((o) => o + shift),
+        baseOffset,
+        cardBaseOffset,
+        playerNameOffset,
+        stylingOffset,
+        deckOffsets,
+        deckNameOffsets,      // 👈 new
         wordEndian: cfg.wordEndian || "big",
-        statsOffsets: cfg.statsOffsets
-            ? Object.fromEntries(
-                Object.entries(cfg.statsOffsets).map(([k, v]) => [k, v + shift])
-            )
-            : null,
+        statsOffsets,
     };
 }
 
@@ -598,5 +615,58 @@ export function writeStats(bytes, ctx, stats) {
             const v = stats.opponentWins[i] ?? 0;
             bytes[o.opponentWins + i] = clampByte(v);
         }
+    }
+}
+
+// Deck names: 10 characters, stored as [char, 0x00] pairs
+
+export function readDeckName(bytes, ctx, deckIndex) {
+    if (!ctx.deckNameOffsets) {
+        throw new Error("Deck names are not configured for this platform.");
+    }
+    const base = ctx.deckNameOffsets[deckIndex];
+    if (base == null) {
+        throw new Error(`No deck name offset for deck index ${deckIndex}`);
+    }
+    if (base < 0 || base + 20 > bytes.length) {
+        throw new Error(
+            `Deck name offset ${base} out of range (file size: ${bytes.length})`
+        );
+    }
+
+    const chars = [];
+    for (let i = 0; i < 10; i++) {
+        const charByte = bytes[base + i * 2]; // char, then padding 0x00
+        if (charByte === 0x00) break;
+        chars.push(String.fromCharCode(charByte));
+    }
+    return chars.join("");
+}
+
+export function writeDeckName(bytes, ctx, deckIndex, name) {
+    if (!ctx.deckNameOffsets) {
+        throw new Error("Deck names are not configured for this platform.");
+    }
+    const base = ctx.deckNameOffsets[deckIndex];
+    if (base == null) {
+        throw new Error(`No deck name offset for deck index ${deckIndex}`);
+    }
+    if (base < 0 || base + 20 > bytes.length) {
+        throw new Error(
+            `Deck name offset ${base} out of range (file size: ${bytes.length})`
+        );
+    }
+
+    const safeName = (name || "").slice(0, 10);
+
+    for (let i = 0; i < 10; i++) {
+        const idx = base + i * 2;
+        let charCode = 0;
+        if (i < safeName.length) {
+            const c = safeName.charCodeAt(i);
+            charCode = c >= 0x20 && c <= 0x7e ? c : 0x3f; // '?'
+        }
+        bytes[idx] = charCode;
+        bytes[idx + 1] = 0x00; // padding
     }
 }
