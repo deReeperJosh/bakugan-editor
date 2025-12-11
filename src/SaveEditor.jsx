@@ -590,9 +590,9 @@ export default function BakuganSaveEditor() {
                 {/* Tab content */}
                 {parsed && activeTab === "bakugan" && (
                     <section className="space-y-4">
-                        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-                            <div className="flex flex-col md:flex-row gap-4">
-                                <div className="flex flex-col">
+                        <div className="flex justify-center">
+                            <div className="flex flex-col md:flex-row gap-6 items-center">
+                                <div className="flex flex-col items-center">
                                     <label className="text-sm font-medium mb-1 text-gray-900">
                                         Bakugan
                                     </label>
@@ -609,7 +609,7 @@ export default function BakuganSaveEditor() {
                                     </select>
                                 </div>
 
-                                <div className="flex flex-col">
+                                <div className="flex flex-col items-center">
                                     <label className="text-sm font-medium mb-1 text-gray-900">
                                         Attribute
                                     </label>
@@ -627,6 +627,7 @@ export default function BakuganSaveEditor() {
                                 </div>
                             </div>
                         </div>
+
 
                         {entry && editableStats ? (
                             <div className="mt-2">
@@ -952,7 +953,7 @@ export default function BakuganSaveEditor() {
                         <h2 className="text-lg font-semibold text-gray-900">Appearance</h2>
 
                         {/* Player name */}
-                        <div className="max-w-md space-y-2">
+                        <div className="max-w-md mx-auto space-y-3 text-center">
                             <label className="text-sm font-medium text-gray-900">
                                 Player Name
                             </label>
@@ -961,10 +962,10 @@ export default function BakuganSaveEditor() {
                                 maxLength={8}
                                 value={playerName}
                                 onChange={(e) => setPlayerName(e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 mx-auto"
                                 placeholder="Enter up to 8 characters"
                             />
-                            <div className="flex justify-end">
+                            <div className="flex justify-center">
                                 <button
                                     type="button"
                                     onClick={handleSavePlayerName}
@@ -974,6 +975,7 @@ export default function BakuganSaveEditor() {
                                 </button>
                             </div>
                         </div>
+
 
                         {/* Character styling */}
                         <div className="space-y-3">
