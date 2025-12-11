@@ -7,31 +7,47 @@ import {
 } from "./constants";
 
 // -----------------
+// Platform configs
+// -----------------
+
+const FORMAT_CONFIGS = {
+    ps3: {
+        saveSize: null,              // single save per file
+        baseOffset: 227,             // Bakugan base
+        cardBaseOffset: -48,      // TODO: update when known
+        playerNameOffset: 0x00C5,
+        stylingOffset: 0x31BF,
+        deckOffsets: [0x2908, 0x2954],
+    },
+    wii: {
+        saveSize: 13952,             // bytes per save
+        baseOffset: 275,             // 227 + 48
+        cardBaseOffset: 0x0000,      // card flags start at 0 per save
+        playerNameOffset: 0x00F5,    // 0xC5 + 0x30
+        stylingOffset: 0x31EF,       // 0x31BF + 0x30
+        deckOffsets: [0x2938, 0x2984], // +0x30 from PS3
+    },
+};
+
+export const PLATFORMS = ["ps3", "wii"];
+
+// -----------------
 // Core config
 // -----------------
 
-const BASE_OFFSET = 227;
 const BAKUGAN_BLOCK_SIZE = 120;
 const ATTRIBUTE_BLOCK_SIZE = 20;
 const ENTRY_SIZE = 14;
 
-// Cards unlocked flags – you must set this to the correct base offset.
-const CARD_BASE_OFFSET = -48; //
-// Player name
-const PLAYER_NAME_OFFSET = 0xC5;
 const PLAYER_NAME_MAX_CHARS = 8;
-
-// Styling (appearance)
-const STYLING_OFFSET = 0x31BF;
 const STYLING_LENGTH = 45;
 
-// Decks
-const DECK_OFFSETS = [0x2908, 0x2954];
+// Deck encoding
 const DECK_LENGTH = 36;
-const DECK_CARD_BASE_ID = 10232; // 0x27F8 – first card ID used in deck encoding
+const DECK_CARD_BASE_ID = 10232; // 0x27F8
 
 // -------------
-// Bakugan lists
+// Lists & maps
 // -------------
 
 export const bakuganList = [...BAKUGAN].sort((a, b) => a.id - b.id);
@@ -44,10 +60,6 @@ const attributeNameById = Object.fromEntries(
     attributeList.map(({ id, name }) => [id, name])
 );
 
-// -------------
-// Card lists
-// -------------
-
 export const CARD_TYPES = ["Gold", "Silver", "Bronze", "Red", "Green", "Blue"];
 
 export const cardsByType = CARD_TYPES.map((type) => ({
@@ -57,9 +69,39 @@ export const cardsByType = CARD_TYPES.map((type) => ({
 
 export const cardList = cardsByType.flatMap((g) => g.cards);
 
-// -------------
+// -----------------
+// Save context
+// -----------------
+
+export function getSaveContext(platform, saveSlot = 0) {
+    const cfg = FORMAT_CONFIGS[platform];
+    if (!cfg) {
+        throw new Error(`Unknown platform: ${platform}`);
+    }
+
+    let slot = saveSlot || 0;
+    if (platform === "ps3") slot = 0; // only one save
+    if (platform === "wii") {
+        if (slot < 0) slot = 0;
+        if (slot > 3) slot = 3;
+    }
+
+    const shift = cfg.saveSize ? cfg.saveSize * slot : 0;
+
+    return {
+        platform,
+        slot,
+        baseOffset: cfg.baseOffset + shift,
+        cardBaseOffset: cfg.cardBaseOffset + shift,
+        playerNameOffset: cfg.playerNameOffset + shift,
+        stylingOffset: cfg.stylingOffset + shift,
+        deckOffsets: cfg.deckOffsets.map((o) => o + shift),
+    };
+}
+
+// -----------------
 // Core helpers
-// -------------
+// -----------------
 
 export function parseSaveFile(buffer) {
     const bytes = new Uint8Array(buffer);
@@ -73,9 +115,9 @@ export function serializeSaveFile(parsed) {
     return parsed.buffer;
 }
 
-export function getBakuganOffset(bakuganId, attributeId) {
+export function getBakuganOffset(ctx, bakuganId, attributeId) {
     return (
-        BASE_OFFSET +
+        ctx.baseOffset +
         bakuganId * BAKUGAN_BLOCK_SIZE +
         attributeId * ATTRIBUTE_BLOCK_SIZE
     );
@@ -85,8 +127,8 @@ export function getBakuganOffset(bakuganId, attributeId) {
 // Bakugan entry parsing
 // ---------------------
 
-export function readBakuganEntry(bytes, bakuganId, attributeId) {
-    const offset = getBakuganOffset(bakuganId, attributeId);
+export function readBakuganEntry(bytes, ctx, bakuganId, attributeId) {
+    const offset = getBakuganOffset(ctx, bakuganId, attributeId);
 
     if (offset + ENTRY_SIZE > bytes.length) {
         throw new Error(
@@ -127,8 +169,8 @@ export function readBakuganEntry(bytes, bakuganId, attributeId) {
     };
 }
 
-export function writeBakuganEntry(bytes, bakuganId, attributeId, raw) {
-    const offset = getBakuganOffset(bakuganId, attributeId);
+export function writeBakuganEntry(bytes, ctx, bakuganId, attributeId, raw) {
+    const offset = getBakuganOffset(ctx, bakuganId, attributeId);
 
     if (offset + ENTRY_SIZE > bytes.length) {
         throw new Error(
@@ -136,8 +178,8 @@ export function writeBakuganEntry(bytes, bakuganId, attributeId, raw) {
         );
     }
 
-    bytes[offset + 0] = bakuganId ?? 0;
-    bytes[offset + 4] = attributeId ?? 0;
+    bytes[offset + 0] = raw.id ?? 0;
+    bytes[offset + 4] = raw.attribute ?? 0;
 
     const power = raw.power ?? 0;
     // Big-endian
@@ -156,12 +198,12 @@ export function writeBakuganEntry(bytes, bakuganId, attributeId, raw) {
 // Card flags
 // -------------
 
-function getCardOffset(cardId) {
-    return CARD_BASE_OFFSET + cardId;
+function getCardOffset(ctx, cardId) {
+    return ctx.cardBaseOffset + cardId;
 }
 
-export function readCardFlag(bytes, cardId) {
-    const offset = getCardOffset(cardId);
+export function readCardFlag(bytes, ctx, cardId) {
+    const offset = getCardOffset(ctx, cardId);
     if (offset >= bytes.length) {
         throw new Error(
             `Card offset ${offset} (cardId ${cardId}) out of range (file size: ${bytes.length})`
@@ -170,8 +212,8 @@ export function readCardFlag(bytes, cardId) {
     return bytes[offset] !== 0;
 }
 
-export function writeCardFlag(bytes, cardId, unlocked) {
-    const offset = getCardOffset(cardId);
+export function writeCardFlag(bytes, ctx, cardId, unlocked) {
+    const offset = getCardOffset(ctx, cardId);
     if (offset >= bytes.length) {
         throw new Error(
             `Card offset ${offset} (cardId ${cardId}) out of range (file size: ${bytes.length})`
@@ -184,8 +226,8 @@ export function writeCardFlag(bytes, cardId, unlocked) {
 // Player name
 // -------------
 
-export function readPlayerName(bytes) {
-    const base = PLAYER_NAME_OFFSET;
+export function readPlayerName(bytes, ctx) {
+    const base = ctx.playerNameOffset;
     const chars = [];
 
     for (let i = 0; i < PLAYER_NAME_MAX_CHARS; i++) {
@@ -197,8 +239,8 @@ export function readPlayerName(bytes) {
     return chars.join("");
 }
 
-export function writePlayerName(bytes, name) {
-    const base = PLAYER_NAME_OFFSET;
+export function writePlayerName(bytes, ctx, name) {
+    const base = ctx.playerNameOffset;
     const safeName = (name || "").slice(0, PLAYER_NAME_MAX_CHARS);
 
     for (let i = 0; i < PLAYER_NAME_MAX_CHARS; i++) {
@@ -219,8 +261,8 @@ export function writePlayerName(bytes, name) {
 // Styling block
 // -------------
 
-export function readStyling(bytes) {
-    const base = STYLING_OFFSET;
+export function readStyling(bytes, ctx) {
+    const base = ctx.stylingOffset;
 
     if (base + STYLING_LENGTH > bytes.length) {
         throw new Error(
@@ -238,8 +280,8 @@ export function readStyling(bytes) {
     return styling;
 }
 
-export function writeStyling(bytes, styling) {
-    const base = STYLING_OFFSET;
+export function writeStyling(bytes, ctx, styling) {
+    const base = ctx.stylingOffset;
 
     if (base + STYLING_LENGTH > bytes.length) {
         throw new Error(
@@ -265,8 +307,8 @@ export function writeStyling(bytes, styling) {
 // Decks
 // -------------
 
-export function readDeck(bytes, deckIndex) {
-    const base = DECK_OFFSETS[deckIndex];
+export function readDeck(bytes, ctx, deckIndex) {
+    const base = ctx.deckOffsets[deckIndex];
     if (base == null) {
         throw new Error(`Invalid deck index ${deckIndex}`);
     }
@@ -325,8 +367,8 @@ export function readDeck(bytes, deckIndex) {
     return deck;
 }
 
-export function writeDeck(bytes, deckIndex, deck) {
-    const base = DECK_OFFSETS[deckIndex];
+export function writeDeck(bytes, ctx, deckIndex, deck) {
+    const base = ctx.deckOffsets[deckIndex];
     if (base == null) {
         throw new Error(`Invalid deck index ${deckIndex}`);
     }

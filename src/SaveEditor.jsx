@@ -1,5 +1,10 @@
 // BakuganSaveEditor.jsx
-import React, { useCallback, useEffect, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from "react";
 import {
     parseSaveFile,
     serializeSaveFile,
@@ -16,6 +21,8 @@ import {
     writeStyling,
     readDeck,
     writeDeck,
+    PLATFORMS,
+    getSaveContext,
 } from "./saveFormat";
 import { STYLING_FIELDS, getStylingOptions } from "./constants";
 
@@ -56,6 +63,9 @@ export default function BakuganSaveEditor() {
     const [parsed, setParsed] = useState(null);
     const [error, setError] = useState("");
     const [isDragging, setIsDragging] = useState(false);
+
+    const [platform, setPlatform] = useState("ps3");
+    const [saveSlot, setSaveSlot] = useState(0); // 0-based; Wii uses 0–3
 
     const [activeTab, setActiveTab] = useState("bakugan");
 
@@ -148,17 +158,30 @@ export default function BakuganSaveEditor() {
         }
     };
 
+    // ---------- Save context (platform + slot) ----------
+    // useMemo so ctx is stable and doesn't trigger cascading effects
+    const ctx = useMemo(() => {
+        if (!parsed || !platform) return null;
+        try {
+            return getSaveContext(platform, saveSlot);
+        } catch (e) {
+            console.error(e);
+            setError(e.message || "Invalid platform/save slot configuration.");
+            return null;
+        }
+    }, [parsed, platform, saveSlot]);
+
     // ---------- Bakugan stats ----------
 
     const refreshEntry = useCallback(
         (bakuganId = selectedBakuganId, attributeId = selectedAttributeId) => {
-            if (!parsed?.bytes) {
+            if (!parsed?.bytes || !ctx) {
                 setEntry(null);
                 setEditableStats(null);
                 return;
             }
             try {
-                const data = readBakuganEntry(parsed.bytes, bakuganId, attributeId);
+                const data = readBakuganEntry(parsed.bytes, ctx, bakuganId, attributeId);
                 setEntry(data);
             } catch (e) {
                 console.error(e);
@@ -167,14 +190,17 @@ export default function BakuganSaveEditor() {
                 setEditableStats(null);
             }
         },
-        [parsed, selectedBakuganId, selectedAttributeId]
+        [parsed, ctx, selectedBakuganId, selectedAttributeId]
     );
 
     useEffect(() => {
-        if (parsed) {
+        if (parsed && ctx) {
             refreshEntry();
+        } else {
+            setEntry(null);
+            setEditableStats(null);
         }
-    }, [parsed, selectedBakuganId, selectedAttributeId, refreshEntry]);
+    }, [parsed, ctx, selectedBakuganId, selectedAttributeId, refreshEntry]);
 
     useEffect(() => {
         if (!entry) {
@@ -213,7 +239,7 @@ export default function BakuganSaveEditor() {
     };
 
     const handleSaveStats = () => {
-        if (!parsed?.bytes || !entry || !editableStats) return;
+        if (!parsed?.bytes || !entry || !editableStats || !ctx) return;
 
         try {
             const power = clamp(Math.round(editableStats.power ?? 0), 0, 1000);
@@ -242,6 +268,7 @@ export default function BakuganSaveEditor() {
 
             writeBakuganEntry(
                 parsed.bytes,
+                ctx,
                 selectedBakuganId,
                 selectedAttributeId,
                 rawToWrite
@@ -257,14 +284,14 @@ export default function BakuganSaveEditor() {
     // ---------- Cards (unlock flags) ----------
 
     useEffect(() => {
-        if (!parsed?.bytes) {
+        if (!parsed?.bytes || !ctx) {
             setCardStates(null);
             return;
         }
         try {
             const states = cardList.map((card) => ({
                 ...card,
-                unlocked: readCardFlag(parsed.bytes, card.id),
+                unlocked: readCardFlag(parsed.bytes, ctx, card.id),
             }));
             setCardStates(states);
         } catch (e) {
@@ -272,13 +299,13 @@ export default function BakuganSaveEditor() {
             setError(e.message || "Failed to read card data.");
             setCardStates(null);
         }
-    }, [parsed]);
+    }, [parsed, ctx]);
 
     const handleCardToggle = (cardId) => (e) => {
-        if (!parsed?.bytes) return;
+        if (!parsed?.bytes || !ctx) return;
         const unlocked = e.target.checked;
         try {
-            writeCardFlag(parsed.bytes, cardId, unlocked);
+            writeCardFlag(parsed.bytes, ctx, cardId, unlocked);
             setCardStates((prev) =>
                 prev ? prev.map((c) => (c.id === cardId ? { ...c, unlocked } : c)) : prev
             );
@@ -289,10 +316,10 @@ export default function BakuganSaveEditor() {
     };
 
     const handleUnlockAllCards = () => {
-        if (!parsed?.bytes || !cardStates) return;
+        if (!parsed?.bytes || !cardStates || !ctx) return;
         try {
             cardStates.forEach((card) => {
-                writeCardFlag(parsed.bytes, card.id, true);
+                writeCardFlag(parsed.bytes, ctx, card.id, true);
             });
             setCardStates((prev) =>
                 prev ? prev.map((c) => ({ ...c, unlocked: true })) : prev
@@ -304,10 +331,10 @@ export default function BakuganSaveEditor() {
     };
 
     const handleLockAllCards = () => {
-        if (!parsed?.bytes || !cardStates) return;
+        if (!parsed?.bytes || !cardStates || !ctx) return;
         try {
             cardStates.forEach((card) => {
-                writeCardFlag(parsed.bytes, card.id, false);
+                writeCardFlag(parsed.bytes, ctx, card.id, false);
             });
             setCardStates((prev) =>
                 prev ? prev.map((c) => ({ ...c, unlocked: false })) : prev
@@ -318,7 +345,8 @@ export default function BakuganSaveEditor() {
         }
     };
 
-    const totalCards = cardStates?.length ?? 0;
+    const totalCards =
+        cardStates?.length ?? 0;
     const unlockedCount =
         cardStates?.reduce((acc, c) => (c.unlocked ? acc + 1 : acc), 0) ?? 0;
 
@@ -334,18 +362,19 @@ export default function BakuganSaveEditor() {
             return acc;
         }, {});
 
-    // ---------- Appearance (name + styling) ----------
+    // ---------- Appearance (name + styling + decks) ----------
 
     useEffect(() => {
-        if (!parsed?.bytes) {
+        if (!parsed?.bytes || !ctx) {
             setPlayerName("");
             setStyling(null);
             setDecks(null);
             return;
         }
 
+        // Player name
         try {
-            const name = readPlayerName(parsed.bytes);
+            const name = readPlayerName(parsed.bytes, ctx);
             setPlayerName(name);
         } catch (e) {
             console.error(e);
@@ -353,8 +382,9 @@ export default function BakuganSaveEditor() {
             setPlayerName("");
         }
 
+        // Styling
         try {
-            const currentStyling = readStyling(parsed.bytes);
+            const currentStyling = readStyling(parsed.bytes, ctx);
             setStyling(currentStyling);
         } catch (e) {
             console.error(e);
@@ -362,22 +392,23 @@ export default function BakuganSaveEditor() {
             setStyling(null);
         }
 
+        // Decks
         try {
-            const deck1 = readDeck(parsed.bytes, 0);
-            const deck2 = readDeck(parsed.bytes, 1);
+            const deck1 = readDeck(parsed.bytes, ctx, 0);
+            const deck2 = readDeck(parsed.bytes, ctx, 1);
             setDecks([deck1, deck2]);
         } catch (e) {
             console.error(e);
             setError(e.message || "Failed to read decks.");
             setDecks(null);
         }
-    }, [parsed]);
+    }, [parsed, ctx]);
 
     const handleSavePlayerName = () => {
-        if (!parsed?.bytes) return;
+        if (!parsed?.bytes || !ctx) return;
         try {
-            writePlayerName(parsed.bytes, playerName);
-            const updated = readPlayerName(parsed.bytes);
+            writePlayerName(parsed.bytes, ctx, playerName);
+            const updated = readPlayerName(parsed.bytes, ctx);
             setPlayerName(updated);
         } catch (e) {
             console.error(e);
@@ -386,10 +417,10 @@ export default function BakuganSaveEditor() {
     };
 
     const handleSaveStyling = () => {
-        if (!parsed?.bytes || !styling) return;
+        if (!parsed?.bytes || !styling || !ctx) return;
         try {
-            writeStyling(parsed.bytes, styling);
-            const updated = readStyling(parsed.bytes);
+            writeStyling(parsed.bytes, ctx, styling);
+            const updated = readStyling(parsed.bytes, ctx);
             setStyling(updated);
         } catch (e) {
             console.error(e);
@@ -414,9 +445,8 @@ export default function BakuganSaveEditor() {
     // ---------- Decks ----------
 
     const GATE_TYPES = ["Gold", "Silver", "Bronze"];
-
     const gateCardOptions = cardList.filter((c) => GATE_TYPES.includes(c.type));
-    const abilityCardOptions = cardList; // Gate cards can be used as ability cards
+    const abilityCardOptions = cardList; // any card allowed as ability card
 
     const updateDeckSlot = (deckIndex, section, slotIndex, changes) => {
         setDecks((prev) => {
@@ -445,7 +475,7 @@ export default function BakuganSaveEditor() {
 
     const handleBakuganSlotChange = (deckIndex, slotIndex, field) => (e) => {
         const val = Number(e.target.value);
-        if (val === -1 && field === "bakuganId") {
+        if (field === "bakuganId" && val === -1) {
             updateDeckSlot(deckIndex, "bakugan", slotIndex, {
                 bakuganId: null,
                 attributeId: null,
@@ -472,13 +502,13 @@ export default function BakuganSaveEditor() {
     };
 
     const handleSaveDecks = () => {
-        if (!parsed?.bytes || !decks) return;
+        if (!parsed?.bytes || !decks || !ctx) return;
         try {
             decks.forEach((deck, idx) => {
-                writeDeck(parsed.bytes, idx, deck);
+                writeDeck(parsed.bytes, ctx, idx, deck);
             });
-            const deck1 = readDeck(parsed.bytes, 0);
-            const deck2 = readDeck(parsed.bytes, 1);
+            const deck1 = readDeck(parsed.bytes, ctx, 0);
+            const deck2 = readDeck(parsed.bytes, ctx, 1);
             setDecks([deck1, deck2]);
         } catch (e) {
             console.error(e);
@@ -505,12 +535,53 @@ export default function BakuganSaveEditor() {
                         onClick={handleDownload}
                         disabled={!parsed}
                         className={`px-4 py-2 rounded-xl text-sm font-medium ${parsed
-                            ? "bg-blue-600 text-white hover:bg-blue-700 transition"
-                            : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                                ? "bg-blue-600 text-white hover:bg-blue-700 transition"
+                                : "bg-gray-200 text-gray-500 cursor-not-allowed"
                             }`}
                     >
                         Download Save
                     </button>
+                </div>
+
+                {/* Platform + Save slot selector */}
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <label className="text-sm font-medium text-gray-900">
+                            Platform
+                        </label>
+                        <select
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                            value={platform}
+                            onChange={(e) => {
+                                setPlatform(e.target.value);
+                                setSaveSlot(0);
+                            }}
+                        >
+                            {PLATFORMS.map((p) => (
+                                <option key={p} value={p}>
+                                    {p.toUpperCase()}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {platform === "wii" && (
+                        <div className="flex items-center gap-3">
+                            <label className="text-sm font-medium text-gray-900">
+                                Save Slot
+                            </label>
+                            <select
+                                className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                                value={saveSlot}
+                                onChange={(e) => setSaveSlot(Number(e.target.value))}
+                            >
+                                <option value={0}>Slot 1</option>
+                                <option value={1}>Slot 2</option>
+                                <option value={2}>Slot 3</option>
+                                <option value={3}>Slot 4</option>
+                            </select>
+                        </div>
+                    )}
                 </div>
 
                 {/* Upload / Drag & Drop */}
@@ -549,8 +620,8 @@ export default function BakuganSaveEditor() {
                         type="button"
                         onClick={() => setActiveTab("bakugan")}
                         className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "bakugan"
-                            ? "border-blue text-white"
-                            : "border-transparent text-white hover:text-gray-500"
+                                ? "border-blue-600 text-gray-900"
+                                : "border-transparent text-gray-700 hover:text-gray-900"
                             }`}
                     >
                         Bakugan Stats
@@ -559,8 +630,8 @@ export default function BakuganSaveEditor() {
                         type="button"
                         onClick={() => setActiveTab("cards")}
                         className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "cards"
-                            ? "border-blue text-white"
-                            : "border-transparent text-white hover:text-gray-500"
+                                ? "border-blue-600 text-gray-900"
+                                : "border-transparent text-gray-700 hover:text-gray-900"
                             }`}
                     >
                         Cards
@@ -569,8 +640,8 @@ export default function BakuganSaveEditor() {
                         type="button"
                         onClick={() => setActiveTab("appearance")}
                         className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "appearance"
-                            ? "border-blue text-white"
-                            : "border-transparent text-white hover:text-gray-500"
+                                ? "border-blue-600 text-gray-900"
+                                : "border-transparent text-gray-700 hover:text-gray-900"
                             }`}
                     >
                         Appearance
@@ -579,8 +650,8 @@ export default function BakuganSaveEditor() {
                         type="button"
                         onClick={() => setActiveTab("decks")}
                         className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "decks"
-                            ? "border-blue text-white"
-                            : "border-transparent text-white hover:text-gray-500"
+                                ? "border-blue-600 text-gray-900"
+                                : "border-transparent text-gray-700 hover:text-gray-900"
                             }`}
                     >
                         Decks
@@ -588,8 +659,9 @@ export default function BakuganSaveEditor() {
                 </div>
 
                 {/* Tab content */}
-                {parsed && activeTab === "bakugan" && (
+                {parsed && ctx && activeTab === "bakugan" && (
                     <section className="space-y-4">
+                        {/* Centered Bakugan + Attribute */}
                         <div className="flex justify-center">
                             <div className="flex flex-col md:flex-row gap-6 items-center">
                                 <div className="flex flex-col items-center">
@@ -628,9 +700,12 @@ export default function BakuganSaveEditor() {
                             </div>
                         </div>
 
-
                         {entry && editableStats ? (
                             <div className="mt-2">
+                                <p className="text-xs text-gray-800 mb-2">
+                                    Offset: {entry.offset} (0x
+                                    {entry.offset.toString(16).toUpperCase()})
+                                </p>
 
                                 <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
                                     <thead className="bg-gray-100">
@@ -797,13 +872,14 @@ export default function BakuganSaveEditor() {
                     </section>
                 )}
 
-                {parsed && activeTab === "cards" && (
+                {parsed && ctx && activeTab === "cards" && (
                     <section className="space-y-6">
                         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                             <div>
                                 <h2 className="text-lg font-semibold text-gray-900">Cards</h2>
                                 <p className="text-xs text-gray-800">
-                                    Toggle cards to unlock/lock.
+                                    Toggle cards to unlock/lock. Each card is stored as 1 byte (0 =
+                                    locked, 1 = unlocked) in the current save slot.
                                 </p>
                                 {totalCards > 0 && (
                                     <p className="text-xs text-gray-800 mt-1">
@@ -822,8 +898,8 @@ export default function BakuganSaveEditor() {
                                     onClick={handleUnlockAllCards}
                                     disabled={!cardStates}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-medium ${cardStates
-                                        ? "bg-green-600 text-white hover:bg-green-700 transition"
-                                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                                            ? "bg-green-600 text-white hover:bg-green-700 transition"
+                                            : "bg-gray-200 text-gray-500 cursor-not-allowed"
                                         }`}
                                 >
                                     Unlock All
@@ -833,8 +909,8 @@ export default function BakuganSaveEditor() {
                                     onClick={handleLockAllCards}
                                     disabled={!cardStates}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-medium ${cardStates
-                                        ? "bg-red-600 text-white hover:bg-red-700 transition"
-                                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                                            ? "bg-red-600 text-white hover:bg-red-700 transition"
+                                            : "bg-gray-200 text-gray-500 cursor-not-allowed"
                                         }`}
                                 >
                                     Lock All
@@ -943,16 +1019,18 @@ export default function BakuganSaveEditor() {
                                 ))}
                             </div>
                         ) : (
-                            <p className="text-sm text-gray-800">Card data not available.</p>
+                            <p className="text-sm text-gray-800">
+                                Card data not available for this save.
+                            </p>
                         )}
                     </section>
                 )}
 
-                {parsed && activeTab === "appearance" && (
+                {parsed && ctx && activeTab === "appearance" && (
                     <section className="space-y-6">
                         <h2 className="text-lg font-semibold text-gray-900">Appearance</h2>
 
-                        {/* Player name */}
+                        {/* Centered Player name */}
                         <div className="max-w-md mx-auto space-y-3 text-center">
                             <label className="text-sm font-medium text-gray-900">
                                 Player Name
@@ -965,6 +1043,10 @@ export default function BakuganSaveEditor() {
                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 mx-auto"
                                 placeholder="Enter up to 8 characters"
                             />
+                            <p className="text-xs text-gray-800">
+                                Stored as up to 8 ASCII characters (each followed by a padding
+                                byte) at a platform-dependent offset.
+                            </p>
                             <div className="flex justify-center">
                                 <button
                                     type="button"
@@ -976,12 +1058,15 @@ export default function BakuganSaveEditor() {
                             </div>
                         </div>
 
-
                         {/* Character styling */}
                         <div className="space-y-3">
                             <h3 className="text-md font-semibold text-gray-900">
                                 Character Style
                             </h3>
+                            <p className="text-xs text-gray-800">
+                                These options control your avatar&apos;s appearance in this save
+                                slot.
+                            </p>
 
                             {styling ? (
                                 <>
@@ -1039,18 +1124,19 @@ export default function BakuganSaveEditor() {
                                 </>
                             ) : (
                                 <p className="text-sm text-gray-800">
-                                    Styling data not available.
+                                    Styling data not available for this save.
                                 </p>
                             )}
                         </div>
                     </section>
                 )}
 
-                {parsed && activeTab === "decks" && (
+                {parsed && ctx && activeTab === "decks" && (
                     <section className="space-y-6">
                         <h2 className="text-lg font-semibold text-gray-900">Decks</h2>
                         <p className="text-xs text-gray-800">
-                            Each deck contains 3 Bakugan, 3 Gate Cards, and 3 Ability Cards.
+                            Each deck contains 3 Bakugan, 3 Gate Cards, and 3 Ability Cards for
+                            the current save slot.
                         </p>
 
                         {decks ? (
@@ -1221,7 +1307,9 @@ export default function BakuganSaveEditor() {
                                 </div>
                             </>
                         ) : (
-                            <p className="text-sm text-gray-800">Deck data not available.</p>
+                            <p className="text-sm text-gray-800">
+                                Deck data not available for this save.
+                            </p>
                         )}
                     </section>
                 )}
