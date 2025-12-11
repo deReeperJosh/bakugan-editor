@@ -519,7 +519,7 @@ export default function BakuganSaveEditor() {
     // ---------- Render ----------
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
+        <div className="min-h-screen min-w-screen flex items-center justify-center bg-gray-100">
             <div className="bg-white rounded-2xl shadow-lg p-6 w-full max-w-5xl space-y-6">
                 {/* Header */}
                 <div className="flex items-center justify-between gap-4">
@@ -535,8 +535,8 @@ export default function BakuganSaveEditor() {
                         onClick={handleDownload}
                         disabled={!parsed}
                         className={`px-4 py-2 rounded-xl text-sm font-medium ${parsed
-                                ? "bg-blue-600 text-white hover:bg-blue-700 transition"
-                                : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                            ? "bg-blue-600 text-white hover:bg-blue-700 transition"
+                            : "bg-gray-200 text-gray-500 cursor-not-allowed"
                             }`}
                     >
                         Download Save
@@ -615,47 +615,25 @@ export default function BakuganSaveEditor() {
                 )}
 
                 {/* Tabs */}
-                <div className="border-b border-gray-200 flex gap-4">
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("bakugan")}
-                        className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "bakugan"
-                                ? "border-blue-600 text-gray-900"
-                                : "border-transparent text-gray-700 hover:text-gray-900"
-                            }`}
-                    >
-                        Bakugan Stats
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("cards")}
-                        className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "cards"
-                                ? "border-blue-600 text-gray-900"
-                                : "border-transparent text-gray-700 hover:text-gray-900"
-                            }`}
-                    >
-                        Cards
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("appearance")}
-                        className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "appearance"
-                                ? "border-blue-600 text-gray-900"
-                                : "border-transparent text-gray-700 hover:text-gray-900"
-                            }`}
-                    >
-                        Appearance
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("decks")}
-                        className={`pb-2 text-sm font-medium border-b-2 -mb-[1px] ${activeTab === "decks"
-                                ? "border-blue-600 text-gray-900"
-                                : "border-transparent text-gray-700 hover:text-gray-900"
-                            }`}
-                    >
-                        Decks
-                    </button>
+                <div className="border-b border-gray-300 flex justify-center gap-6 pb-2">
+                    {[
+                        { key: "bakugan", label: "Bakugan Stats" },
+                        { key: "cards", label: "Cards" },
+                        { key: "appearance", label: "Appearance" },
+                        { key: "decks", label: "Decks" },
+                    ].map((tab) => (
+                        <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => setActiveTab(tab.key)}
+                            className={`pb-2 text-sm font-medium transition-all ${activeTab === tab.key
+                                ? "text-blue-700 border-b-2 border-blue-600"
+                                : "text-white hover:text-gray-400 hover:border-b-2 hover:border-gray-200"
+                                }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
                 </div>
 
                 {/* Tab content */}
@@ -898,8 +876,8 @@ export default function BakuganSaveEditor() {
                                     onClick={handleUnlockAllCards}
                                     disabled={!cardStates}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-medium ${cardStates
-                                            ? "bg-green-600 text-white hover:bg-green-700 transition"
-                                            : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                                        ? "bg-green-600 text-white hover:bg-green-700 transition"
+                                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
                                         }`}
                                 >
                                     Unlock All
@@ -909,8 +887,8 @@ export default function BakuganSaveEditor() {
                                     onClick={handleLockAllCards}
                                     disabled={!cardStates}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-medium ${cardStates
-                                            ? "bg-red-600 text-white hover:bg-red-700 transition"
-                                            : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                                        ? "bg-red-600 text-white hover:bg-red-700 transition"
+                                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
                                         }`}
                                 >
                                     Lock All
