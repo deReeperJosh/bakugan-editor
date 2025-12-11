@@ -519,7 +519,7 @@ export default function BakuganSaveEditor() {
     // ---------- Render ----------
 
     return (
-        <div className="min-h-screen min-w-screen flex items-center justify-center bg-gray-100">
+        <div className="min-h-screen flex items-center justify-center bg-gray-100">
             <div className="bg-white rounded-2xl shadow-lg p-6 w-full max-w-5xl space-y-6">
                 {/* Header */}
                 <div className="flex items-center justify-between gap-4">
@@ -653,7 +653,7 @@ export default function BakuganSaveEditor() {
                                     >
                                         {bakuganList.map((b) => (
                                             <option key={b.id} value={b.id}>
-                                                {b.name} (ID {b.id})
+                                                {b.name}
                                             </option>
                                         ))}
                                     </select>
@@ -670,7 +670,7 @@ export default function BakuganSaveEditor() {
                                     >
                                         {attributeList.map((a) => (
                                             <option key={a.id} value={a.id}>
-                                                {a.name} (ID {a.id})
+                                                {a.name}
                                             </option>
                                         ))}
                                     </select>
