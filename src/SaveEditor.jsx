@@ -25,6 +25,8 @@ import {
     getSaveContext,
     readStats,
     writeStats,
+    readBakuganUsage,
+    writeBakuganUsage,
     readDeckName,
     writeDeckName,
 } from "./saveFormat";
@@ -97,6 +99,12 @@ export default function BakuganSaveEditor() {
 
     // Stats (battles, wins, ranking, etc.)
     const [stats, setStats] = useState(null);
+
+    // Bakugan usage editor
+    const [usageBakuganId, setUsageBakuganId] = useState(
+        bakuganList[0]?.id ?? 0
+    );
+    const [bakuganUsage, setBakuganUsage] = useState(null); // [Pyrus..Ventus]
 
     // Debug / hex viewer
     const [debugOffsetInput, setDebugOffsetInput] = useState("0");
@@ -620,17 +628,30 @@ export default function BakuganSaveEditor() {
     useEffect(() => {
         if (!parsed?.bytes || !ctx) {
             setStats(null);
+            setBakuganUsage(null);
             return;
         }
+
         try {
             const s = readStats(parsed.bytes, ctx);
             setStats(s);
         } catch (e) {
-            // Stats not available on this platform/slot is not fatal; just show message.
             console.error(e);
+            // Stats not available is not fatal; Stats tab will show a message
             setStats(null);
         }
-    }, [parsed, ctx]);
+
+        // Per-Bakugan usage for the currently selected Bakugan
+        try {
+            const usage = readBakuganUsage(parsed.bytes, ctx, usageBakuganId);
+            setBakuganUsage(usage);
+        } catch (e) {
+            // Bakugan usage might not be configured on this platform
+            console.error(e);
+            setBakuganUsage(null);
+        }
+    }, [parsed, ctx, usageBakuganId]);
+
 
     const handleStatsFieldChange = (key) => (e) => {
         const value = Number(e.target.value);
@@ -674,11 +695,39 @@ export default function BakuganSaveEditor() {
         }
     };
 
+    const handleUsageBakuganChange = (e) => {
+        const id = Number(e.target.value);
+        setUsageBakuganId(id);
+    };
+
+    const handleBakuganUsageChange = (attrId) => (e) => {
+        const value = Number(e.target.value);
+        setBakuganUsage((prev) => {
+            if (!prev) return prev;
+            const copy = [...prev];
+            copy[attrId] = Number.isNaN(value) ? 0 : value;
+            return copy;
+        });
+    };
+
+    const handleSaveBakuganUsage = () => {
+        if (!parsed?.bytes || !ctx || !bakuganUsage) return;
+        try {
+            writeBakuganUsage(parsed.bytes, ctx, usageBakuganId, bakuganUsage);
+            const updated = readBakuganUsage(parsed.bytes, ctx, usageBakuganId);
+            setBakuganUsage(updated);
+            // Optional: you could also recompute stats.attributeUsage totals here later
+        } catch (e) {
+            console.error(e);
+            setError(e.message || "Failed to save Bakugan usage.");
+        }
+    };
+
     // ---------- Render ----------
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100">
-            <div className="bg-white rounded-2xl shadow-lg p-6 w-full max-w-5xl space-y-6">
+        <div className="min-h-screen min-w-screen flex items-center justify-center bg-gray-100">
+            <div className="bg-white rounded-2xl shadow-lg w-full max-w-5xl">
                 {/* Header */}
                 <div className="flex items-center justify-between gap-4">
                     <div>
@@ -1355,7 +1404,7 @@ export default function BakuganSaveEditor() {
                                                             handleDebugPresetDeck(deckIndex)();
                                                             setActiveTab("debug");
                                                         }}
-                                                        className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-gray-800 hover:bg-gray-300"
+                                                        className="px-3 py-1 rounded-lg text-xs bg-gray-200 text-white hover:bg-gray-300"
                                                     >
                                                         View deck bytes in Debug
                                                     </button>
@@ -1783,6 +1832,79 @@ export default function BakuganSaveEditor() {
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+
+                                {/* Bakugan usage panel */}
+                                <div className="space-y-3">
+                                    <h3 className="text-sm font-semibold text-gray-900">
+                                        Bakugan Usage by Attribute
+                                    </h3>
+                                    <p className="text-xs text-gray-800">
+                                        View and edit how many times a specific Bakugan has been used for each
+                                        attribute. This data is stored per Bakugan in a 12-byte table.
+                                    </p>
+
+                                    {bakuganUsage ? (
+                                        <>
+                                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-xs font-medium text-gray-900">
+                                                        Bakugan
+                                                    </label>
+                                                    <select
+                                                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                                                        value={usageBakuganId}
+                                                        onChange={handleUsageBakuganChange}
+                                                    >
+                                                        {bakuganList.map((b) => (
+                                                            <option key={b.id} value={b.id}>
+                                                                {b.name} (ID {b.id})
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+
+                                                <div className="text-xs text-gray-800">
+                                                    Total uses:{" "}
+                                                    <span className="font-semibold">
+                                                        {bakuganUsage.reduce((sum, v) => sum + (v ?? 0), 0)}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div className="grid gap-3 md:grid-cols-3">
+                                                {attributeList.map((attr) => (
+                                                    <div key={attr.id} className="space-y-1">
+                                                        <label className="block text-xs font-medium text-gray-900">
+                                                            {attr.name}
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            max={255}
+                                                            value={bakuganUsage[attr.id] ?? 0}
+                                                            onChange={handleBakuganUsageChange(attr.id)}
+                                                            className="w-full border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900"
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <div className="flex justify-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleSaveBakuganUsage}
+                                                    className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-xl hover:bg-green-700 transition"
+                                                >
+                                                    Save Bakugan Usage to Memory
+                                                </button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <p className="text-xs text-gray-800">
+                                            Bakugan usage data is not available for this platform or save slot.
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="flex justify-end">

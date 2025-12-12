@@ -21,6 +21,7 @@ const FORMAT_CONFIGS = {
         deckOffsets: [0x2908, 0x2954],
         wordEndian: "big",
         deckNameBackOffset: 39,
+        bakuganUsageBase: 0x2B81,
         statsOffsets: {
             rankingPoints: 0x2AAD,
             bakuganPoints: 0x2AB1,
@@ -44,7 +45,8 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x31EF,
         deckOffsets: [0x2938, 0x2984],
         wordEndian: "big",
-        deckNameBackOffset: 39,      // assumption
+        deckNameBackOffset: 39,
+        bakuganUsageBase: null,
         statsOffsets: null,
     },
     ps2: {
@@ -56,6 +58,7 @@ const FORMAT_CONFIGS = {
         deckOffsets: [0x3148, 0x3194],
         wordEndian: "little",
         deckNameBackOffset: 40,
+        bakuganUsageBase: null,
         statsOffsets: null,
     },
     x360: {
@@ -66,7 +69,8 @@ const FORMAT_CONFIGS = {
         stylingOffset: 0x321B,
         deckOffsets: [0x2964, 0x29B0],
         wordEndian: "big",
-        deckNameBackOffset: 39,      // assumption
+        deckNameBackOffset: 39,
+        bakuganUsageBase: null,
         statsOffsets: null,
     },
 };
@@ -146,6 +150,9 @@ export function getSaveContext(platform, saveSlot = 0) {
             ? deckOffsets.map((o) => o - cfg.deckNameBackOffset)
             : null;
 
+    const bakuganUsageBase =
+        cfg.bakuganUsageBase != null ? cfg.bakuganUsageBase + shift : null;
+
     return {
         platform,
         slot,
@@ -154,7 +161,8 @@ export function getSaveContext(platform, saveSlot = 0) {
         playerNameOffset,
         stylingOffset,
         deckOffsets,
-        deckNameOffsets,      // 👈 new
+        deckNameOffsets,
+        bakuganUsageBase,
         wordEndian: cfg.wordEndian || "big",
         statsOffsets,
     };
@@ -636,6 +644,59 @@ export function writeStats(bytes, ctx, stats) {
         }
     }
 }
+
+// Per-Bakugan, per-attribute usage table (PS3):
+// 12 bytes per Bakugan:
+// [ Pyrus, 00, Aquos, 00, Subterra, 00, Haos, 00, Darkus, 00, Ventus, 00 ]
+// usageOffset = ctx.bakuganUsageBase + bakuganId * 12 + attributeId * 2
+
+export function readBakuganUsage(bytes, ctx, bakuganId) {
+    if (ctx.bakuganUsageBase == null) {
+        throw new Error("Bakugan usage table is not configured for this platform.");
+    }
+    const entrySize = 12;
+    const base = ctx.bakuganUsageBase + bakuganId * entrySize;
+
+    if (base < 0 || base + entrySize > bytes.length) {
+        throw new Error(
+            `Bakugan usage entry for ID ${bakuganId} out of range (offset ${base}).`
+        );
+    }
+
+    const usage = [];
+    for (let attrId = 0; attrId < 6; attrId++) {
+        const offset = base + attrId * 2;
+        usage[attrId] = bytes[offset] ?? 0;
+    }
+    return usage; // [Pyrus, Aquos, Subterra, Haos, Darkus, Ventus]
+}
+
+export function writeBakuganUsage(bytes, ctx, bakuganId, usage) {
+    if (ctx.bakuganUsageBase == null) {
+        throw new Error("Bakugan usage table is not configured for this platform.");
+    }
+    const entrySize = 12;
+    const base = ctx.bakuganUsageBase + bakuganId * entrySize;
+
+    if (base < 0 || base + entrySize > bytes.length) {
+        throw new Error(
+            `Bakugan usage entry for ID ${bakuganId} out of range (offset ${base}).`
+        );
+    }
+
+    const clampByte = (n) => {
+        if (Number.isNaN(n)) return 0;
+        return Math.max(0, Math.min(255, n | 0));
+    };
+
+    for (let attrId = 0; attrId < 6; attrId++) {
+        const offset = base + attrId * 2;
+        const v = Array.isArray(usage) ? usage[attrId] : 0;
+        bytes[offset] = clampByte(v);
+        // bytes[offset + 1] is padding; we leave it unchanged
+    }
+}
+
 
 // Deck names: 10 characters, stored as [char, 0x00] pairs
 
